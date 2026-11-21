@@ -2,17 +2,17 @@
 
 ## Project goals
 
-Protect a sample API from excess requests, demonstrate a real use of a NoSQL data model, and show that the backend makes consistent quota decisions when several requests arrive together. The first version uses a fixed window because a client and a window map directly to one counter document, and the behavior is easy to demonstrate.
+Protect a sample API from excess requests, demonstrate a real use of a NoSQL data model, and show that the backend makes consistent quota decisions when several requests arrive together. The first version uses a fixed window because a client and a window map directly to one counter key, and the behavior is easy to demonstrate.
 
 ## Implementation design
 
-1. Validate settings and initialize a database client for the application. Try to set up the expiry index at startup. If MongoDB is unavailable, retry setup on database-dependent requests and return HTTP 503 while setup fails.
+1. Validate settings and initialize a database client for the application. Return HTTP 503 when Redis cannot provide a quota decision.
 2. At the protected route, validate the single client ID header. Reject invalid input with HTTP 400.
 3. Capture the server's current Unix time once for window selection. Divide it by the configured window duration and round down. Multiply the result by the duration to obtain the window start. Add the duration to obtain the end. The start is included and the end belongs to the next window.
-4. Identify the counter using the policy identifier, client ID, and window start. In one atomic database write, insert the document if needed, increment its count by one, and read back the post-write count. Set expiry to the window end plus 60 seconds only on insertion.
+4. Identify the counter using the policy identifier, client ID, and window start. Execute one atomic Redis Lua script. The script increments the integer value, sets expiration to the window end plus 60 seconds on the first increment, and returns the updated count.
 5. If the returned count is at or below the limit, let the protected route return its success response. Otherwise, return HTTP 429 and calculate the retry delay. For either outcome, remaining quota is the larger of zero and the limit minus the returned count.
 6. If the database operation fails and the count is uncertain, respond with HTTP 503. A timed-out write may already have consumed quota. Preserve the attempt's original window during any specifically allowed duplicate-key recovery.
-7. At the next boundary, the new window produces a new document identity. The old counter remains harmless until MongoDB removes it.
+7. At the next boundary, the new window produces a new Redis key. The old counter remains harmless until Redis expires it.
 
 ## Worked example
 

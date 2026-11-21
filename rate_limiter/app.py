@@ -4,18 +4,17 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from math import ceil
-from typing import Any
 
-import pymongo
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
-from pymongo import MongoClient
-from pymongo.errors import ConfigurationError, InvalidName, InvalidURI, PyMongoError
+from redis import Redis
+from redis.backoff import NoBackoff
+from redis.exceptions import RedisError
+from redis.retry import Retry
 
 from rate_limiter.limiter import FixedWindowLimiter
 from rate_limiter.settings import Settings
-from rate_limiter.store import MongoCounterStore
+from rate_limiter.store import RedisCounterStore
 
 logger = logging.getLogger(__name__)
 CLIENT_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
@@ -41,40 +40,31 @@ def create_app(settings: Settings | None = None, *, clock: Callable[[], float] =
     async def lifespan(instance: FastAPI):
         config = settings if settings is not None else Settings.from_env()
         try:
-            client: MongoClient[dict[str, Any]] = MongoClient(
-                config.mongodb_uri,
-                timeoutMS=config.mongodb_timeout_ms,
-                retryWrites=False,
-                connect=False,
-                tz_aware=True,
+            timeout_seconds = config.redis_timeout_ms / 1_000
+            client = Redis.from_url(
+                config.redis_url,
+                socket_timeout=timeout_seconds,
+                socket_connect_timeout=timeout_seconds,
+                # A lost reply could follow a successful increment.
+                retry=Retry(NoBackoff(), 0),
             )
-        except (InvalidURI, ConfigurationError, ValueError):
-            raise ValueError("Invalid MongoDB connection settings.") from None
+        except ValueError:
+            raise ValueError("Invalid REDIS_URL connection settings.") from None
 
         with client:
-            try:
-                store = MongoCounterStore(client, config.mongodb_database)
-            except InvalidName:
-                raise ValueError("Invalid MONGODB_DATABASE name.") from None
-
+            store = RedisCounterStore(client)
             instance.state.store = store
             instance.state.limiter = FixedWindowLimiter(config, store, clock)
-            instance.state.timeout_seconds = config.mongodb_timeout_ms / 1_000
-            try:
-                await run_in_threadpool(store.ensure_index)
-            except PyMongoError as exc:
-                logger.warning("MongoDB counter index setup deferred (%s).", type(exc).__name__)
             yield
 
-    app = FastAPI(title="MongoDB Rate Limiter", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(title="Redis Rate Limiter", version="1.0.0", lifespan=lifespan)
 
-    @app.get("/health", responses={503: {"description": "MongoDB unavailable"}})
+    @app.get("/health", responses={503: {"description": "Redis unavailable"}})
     def health(request: Request) -> JSONResponse:
         try:
-            with pymongo.timeout(request.app.state.timeout_seconds):
-                request.app.state.store.check_ready()
-        except PyMongoError as exc:
-            logger.warning("MongoDB readiness check failed (%s).", type(exc).__name__)
+            request.app.state.store.check_ready()
+        except RedisError as exc:
+            logger.warning("Redis readiness check failed (%s).", type(exc).__name__)
             return JSONResponse({"status": "unavailable"}, status_code=503, headers=NO_STORE)
         return JSONResponse({"status": "ready"}, headers=NO_STORE)
 
@@ -91,10 +81,9 @@ def create_app(settings: Settings | None = None, *, clock: Callable[[], float] =
             )
 
         try:
-            with pymongo.timeout(request.app.state.timeout_seconds):
-                decision = request.app.state.limiter.consume(client_ids[0])
-        except PyMongoError as exc:
-            logger.warning("MongoDB quota check failed (%s).", type(exc).__name__)
+            decision = request.app.state.limiter.consume(client_ids[0])
+        except RedisError as exc:
+            logger.warning("Redis quota check failed (%s).", type(exc).__name__)
             raise HTTPException(
                 status_code=503,
                 detail={"error": "quota_unavailable", "message": "Quota could not be checked."},
