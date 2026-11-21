@@ -1,10 +1,9 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from math import floor
 
 from rate_limiter.settings import Settings
-from rate_limiter.store import MongoCounterStore
+from rate_limiter.store import RedisCounterStore
 
 EXPIRY_GRACE_SECONDS = 60
 
@@ -25,10 +24,10 @@ class Decision:
 
 
 class FixedWindowLimiter:
-    def __init__(self, settings: Settings, store: MongoCounterStore, clock: Callable[[], float]):
+    def __init__(self, settings: Settings, store: RedisCounterStore, clock: Callable[[], float]):
         self.limit = settings.requests_per_window
         self.duration = settings.window_seconds
-        self.policy_key = f"demo-v1:{self.limit}:{self.duration}"
+        self.policy_key = f"{settings.redis_key_prefix}:demo-v1:{self.limit}:{self.duration}"
         self.store = store
         self.clock = clock
 
@@ -37,6 +36,6 @@ class FixedWindowLimiter:
         window_start = now - now % self.duration
         window_end = window_start + self.duration
         key = f"{self.policy_key}:{client_id}:{window_start}"
-        expires_at = datetime.fromtimestamp(window_end + EXPIRY_GRACE_SECONDS, UTC)
+        expires_at = window_end + EXPIRY_GRACE_SECONDS
         count = self.store.increment(key, expires_at)
         return Decision(count=count, limit=self.limit, reset_at=window_end)

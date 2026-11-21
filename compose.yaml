@@ -1,10 +1,11 @@
 services:
-  mongodb:
-    image: mongo:7.0
+  redis:
+    image: redis:7.4
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "127.0.0.1:27017:27017"
+      - "127.0.0.1:6379:6379"
     volumes:
-      - mongodb_data:/data/db
+      - redis_data:/data
 
 volumes:
-  mongodb_data:
+  redis_data:

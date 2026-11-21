@@ -2,26 +2,26 @@
 
 ## Objective
 
-Build a small HTTP backend that enforces a request quota. Question 1 selected **MongoDB's document model** and a **fixed-window rate limiter**. Question 2 demonstrates those choices in a running application.
+Build a small HTTP backend that enforces a request quota. Question 1 selected **Redis’s key-value model** and a **fixed-window rate limiter**. Question 2 demonstrates those choices in a running application.
 
 ## Proposed scope
 
-Use Python with FastAPI and PyMongo. Protect one demonstration endpoint and expose one readiness endpoint. Demonstrate quota enforcement, isolation between clients, reset at a time boundary, and the behavior when the database is unavailable. Use a local deployment for the assignment.
+Use Python with FastAPI and redis-py. Protect one demonstration endpoint and expose one readiness endpoint. Demonstrate quota enforcement, isolation between clients, reset at a time boundary, and the behavior when the database is unavailable. Use a local deployment for the assignment.
 
 ## Work sequence
 
 | Stage | Work | Completion check |
 |---|---|---|
-| 1. Confirm design | Use the document model with a default quota of five requests per 60-second fixed UTC window. Protect the demo route using a client identifier. | The database design matches Question 1 and the API contract is agreed. |
+| 1. Confirm design | Use the key-value model with a default quota of five requests per 60-second fixed UTC window. Protect the demo route using a client identifier. | The database design matches Question 1 and the API contract is agreed. |
 | 2. Set up the backend | Prepare an isolated Python environment, pin dependencies, configure a local database, and validate settings on startup. | The service starts with valid settings and reports database readiness. |
-| 3. Build the counter store | Define the document identity and expiry index. Add the atomic update and validate it against a real database. | One counter is shared by concurrent requests for the same client and window. |
+| 3. Build the counter store | Define the key format and expiration. Add the atomic update and validate it against a real database. | One counter is shared by concurrent requests for the same client and window. |
 | 4. Connect HTTP behavior | Validate the demo client identifier, evaluate the quota, and map decisions to HTTP responses. | Requests return the statuses and headers in the requirements. |
 | 5. Verify and demonstrate | Run the acceptance tests with isolated test data, including concurrent requests and a simulated outage. | Every acceptance case has an expected and recorded actual result. |
 | 6. Prepare submission | Document installation, settings, demo steps, expected responses, and limitations. | A reviewer can reproduce the demonstration from a clean local setup. |
 
 ## Verification and evidence
 
-Use a controllable clock for window-boundary tests and an actual MongoDB instance for database integration checks. Exercise concurrency within a single window and collect status totals. For cleanup, poll for eventual deletion with a bounded test timeout. Capture anonymized request results and a sample counter document. The final demonstration should show five successes, a rejection, a second client succeeding independently, and the first client succeeding in the next window.
+Use a controllable clock for window-boundary tests and an actual Redis instance for database integration checks. Exercise concurrency within a single window and collect status totals. For cleanup, check the configured key expiration and its removal with a bounded timeout. Capture anonymized request results and a sample counter key. The final demonstration should show five successes, a rejection, a second client succeeding independently, and the first client succeeding in the next window.
 
 ## Main project risks
 

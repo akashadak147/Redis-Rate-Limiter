@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from os import environ
+from re import fullmatch
 
 
 def positive_setting(name: str, default: int) -> int:
@@ -15,22 +16,26 @@ def positive_setting(name: str, default: int) -> int:
 
 @dataclass(frozen=True)
 class Settings:
-    mongodb_uri: str = field(default="mongodb://127.0.0.1:27017", repr=False)
-    mongodb_database: str = "rate_limiter"
+    redis_url: str = field(default="redis://127.0.0.1:6379/0", repr=False)
+    redis_key_prefix: str = "rate-limit"
     requests_per_window: int = 5
     window_seconds: int = 60
-    mongodb_timeout_ms: int = 2_000
+    redis_timeout_ms: int = 2_000
 
     @classmethod
     def from_env(cls) -> "Settings":
-        uri = environ.get("MONGODB_URI", cls.mongodb_uri)
-        if not uri.startswith(("mongodb://", "mongodb+srv://")):
-            raise ValueError("MONGODB_URI must be a MongoDB connection URI.")
+        url = environ.get("REDIS_URL", cls.redis_url)
+        if not url.startswith(("redis://", "rediss://", "unix://")):
+            raise ValueError("REDIS_URL must be a Redis connection URL.")
+
+        prefix = environ.get("REDIS_KEY_PREFIX", cls.redis_key_prefix)
+        if not fullmatch(r"[A-Za-z0-9_-]{1,64}", prefix):
+            raise ValueError("REDIS_KEY_PREFIX must use 1 to 64 ASCII letters, digits, hyphens or underscores.")
 
         return cls(
-            mongodb_uri=uri,
-            mongodb_database=environ.get("MONGODB_DATABASE", cls.mongodb_database),
+            redis_url=url,
+            redis_key_prefix=prefix,
             requests_per_window=positive_setting("RATE_LIMIT_REQUESTS", cls.requests_per_window),
             window_seconds=positive_setting("RATE_LIMIT_WINDOW_SECONDS", cls.window_seconds),
-            mongodb_timeout_ms=positive_setting("MONGODB_TIMEOUT_MS", cls.mongodb_timeout_ms),
+            redis_timeout_ms=positive_setting("REDIS_TIMEOUT_MS", cls.redis_timeout_ms),
         )
